@@ -1,0 +1,46 @@
+{
+  "job": {
+    "setting": {
+      "speed": {
+        "channel": 1
+      },
+      "errorLimit": {
+        "record": 0,
+        "percentage": 0.02
+      }
+    },
+    "content": [
+      {
+        "reader": {
+          "name": "mysqlreader",
+          "parameter": {
+            "username": "root",
+            "password": "root123",
+            "column": [
+              "id",
+              "name",
+              "start_time"
+            ],
+            "splitPk": "id",
+            "connection": [
+              {
+                "table": [
+                  "demo"
+                ],
+                "jdbcUrl": [
+                  "jdbc:mysql://127.0.0.1:3306/test"
+                ]
+              }
+            ]
+          }
+        },
+        "writer": {
+          "name": "streamwriter",
+          "parameter": {
+            "print":true
+          }
+        }
+      }
+    ]
+  }
+}

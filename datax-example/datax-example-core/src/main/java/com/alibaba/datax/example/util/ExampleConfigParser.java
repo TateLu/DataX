@@ -94,7 +94,18 @@ public class ExampleConfigParser {
             }
         }
 
-        return basePackages.toArray(new File[0]);
+
+        List<File> finalPackages = new ArrayList<>();
+        for (File basePackage : basePackages) {
+            finalPackages.add(basePackage);
+            if (basePackage.isDirectory() && basePackage.getAbsolutePath().contains("target\\classes")) {
+                String dir = basePackage.getAbsolutePath().replace("target\\classes", "target\\datax");
+                finalPackages.add(new File(dir));
+            }
+        }
+
+
+        return finalPackages.toArray(new File[0]);
     }
 
     /**

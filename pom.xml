@@ -65,8 +65,8 @@
         <module>hbase11xsqlreader</module>
         <module>hbase20xsqlreader</module>
 
-        <module>ossreader</module>
-        <module>hdfsreader</module>
+<!--        <module>ossreader</module>-->
+<!--        <module>hdfsreader</module>-->
         <module>ftpreader</module>
         <module>txtfilereader</module>
         <module>streamreader</module>
@@ -99,7 +99,7 @@
 
 
         <module>odpswriter</module>
-        <module>osswriter</module>
+<!--        <module>osswriter</module>-->
         <module>otswriter</module>
         <module>hbase11xwriter</module>
         <module>hbase094xwriter</module>
@@ -107,7 +107,7 @@
         <module>hbase20xsqlwriter</module>
         <module>kuduwriter</module>
         <module>ftpwriter</module>
-        <module>hdfswriter</module>
+<!--        <module>hdfswriter</module>-->
         <module>txtfilewriter</module>
         <module>streamwriter</module>
 
@@ -117,7 +117,7 @@
         <module>ocswriter</module>
         <module>tsdbwriter</module>
         <module>gdbwriter</module>
-        <module>oscarwriter</module>
+<!--        <module>oscarwriter</module>-->
         <module>loghubwriter</module>
         <module>datahubwriter</module>
         <module>cassandrawriter</module>
