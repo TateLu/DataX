@@ -11,7 +11,7 @@ import org.junit.Test;
 
 public class MysqlTest {
     @Test
-    public void testStreamReader2StreamWriter() {
+    public void testMysql2StreamWriter() {
         String path = "/sql.json";
         String jobPath = PathUtil.getAbsolutePathFromClassPath(path);
         ExampleContainer.start(jobPath);

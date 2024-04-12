@@ -168,7 +168,7 @@ public class CommonRdbmsReader {
             basicMsg = String.format("jdbcUrl:[%s]", this.jdbcUrl);
 
         }
-
+        //书签 mysql 读取
         public void startRead(Configuration readerSliceConfig,
                               RecordSender recordSender,
                               TaskPluginCollector taskPluginCollector, int fetchSize) {
@@ -181,7 +181,7 @@ public class CommonRdbmsReader {
                     querySql, basicMsg);
             PerfRecord queryPerfRecord = new PerfRecord(taskGroupId,taskId, PerfRecord.PHASE.SQL_QUERY);
             queryPerfRecord.start();
-
+            //获取jdbc链接
             Connection conn = DBUtil.getConnection(this.dataBaseType, jdbcUrl,
                     username, password);
 
@@ -206,6 +206,7 @@ public class CommonRdbmsReader {
                 long lastTime = System.nanoTime();
                 while (rs.next()) {
                     rsNextUsedTime += (System.nanoTime() - lastTime);
+                    //解析一条记录
                     this.transportOneRecord(recordSender, rs,
                             metaData, columnNumber, mandatoryEncoding, taskPluginCollector);
                     lastTime = System.nanoTime();

@@ -94,7 +94,7 @@ public class ExampleConfigParser {
             }
         }
 
-
+        //增加扫描 target\datax 目录
         List<File> finalPackages = new ArrayList<>();
         for (File basePackage : basePackages) {
             finalPackages.add(basePackage);
