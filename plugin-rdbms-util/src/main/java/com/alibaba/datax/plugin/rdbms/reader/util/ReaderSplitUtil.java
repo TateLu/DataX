@@ -13,79 +13,100 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * ReaderSplitUtil类提供了处理读取任务分割的工具和方法。
+ * 这个类的主要作用是将大型阅读任务分割为更小、更可管理的片段，
+ * 以便于并行处理或分布式处理。这对于大数据处理场景尤其重要，
+ * 例如，分割一个大文件到多个小文件，每个小文件可以被单独处理。
+ */
 public final class ReaderSplitUtil {
     private static final Logger LOG = LoggerFactory
             .getLogger(ReaderSplitUtil.class);
 
+    /**
+     * 执行配置分割方法
+     * 根据原始配置和建议数量来分割配置，以适应DataX并行任务的需求
+     *
+     * @param originalSliceConfig 原始配置项，包含数据库连接信息、切分列、WHERE条件等
+     * @param adviceNumber 建议的分割数量，即DataX并行任务的数量
+     * @return 返回分割后的Configuration列表，每个Configuration代表一个子任务的配置
+     */
     public static List<Configuration> doSplit(
             Configuration originalSliceConfig, int adviceNumber) {
+        // 判断是否是表模式，即是否需要对多个表进行切分
         boolean isTableMode = originalSliceConfig.getBool(Constant.IS_TABLE_MODE).booleanValue();
+        // 单表应该切分的份数初始化为-1，表示未设置或不适用
         int eachTableShouldSplittedNumber = -1;
         if (isTableMode) {
             // adviceNumber这里是channel数量大小, 即datax并发task数量
             // eachTableShouldSplittedNumber是单表应该切分的份数, 向上取整可能和adviceNumber没有比例关系了已经
+            // 计算每个表应该切分的份数
             eachTableShouldSplittedNumber = calculateEachTableShouldSplittedNumber(
                     adviceNumber, originalSliceConfig.getInt(Constant.TABLE_NUMBER_MARK));
         }
 
+        // 获取切分列名
         String column = originalSliceConfig.getString(Key.COLUMN);
+        // 获取WHERE条件，可能为null
         String where = originalSliceConfig.getString(Key.WHERE, null);
 
+        // 获取连接信息列表
         List<Object> conns = originalSliceConfig.getList(Constant.CONN_MARK, Object.class);
 
+        // 初始化分割后的配置列表
         List<Configuration> splittedConfigs = new ArrayList<Configuration>();
 
+        // 遍历连接列表，为每个连接生成切分配置
         for (int i = 0, len = conns.size(); i < len; i++) {
+            // 克隆原始切片配置以避免修改原始配置
             Configuration sliceConfig = originalSliceConfig.clone();
 
+            // 从当前连接配置中获取JDBC URL
             Configuration connConf = Configuration.from(conns.get(i).toString());
             String jdbcUrl = connConf.getString(Key.JDBC_URL);
             sliceConfig.set(Key.JDBC_URL, jdbcUrl);
 
-            // 抽取 jdbcUrl 中的 ip/port 进行资源使用的打标，以提供给 core 做有意义的 shuffle 操作
+            // 提取jdbcUrl中的ip/port用于资源标记，以支持有意义的shuffle操作
             sliceConfig.set(CommonConstant.LOAD_BALANCE_RESOURCE_MARK, DataBaseType.parseIpFromJdbcUrl(jdbcUrl));
 
+            // 移除连接标记配置
             sliceConfig.remove(Constant.CONN_MARK);
 
+            // 临时切片配置
             Configuration tempSlice;
 
-            // 说明是配置的 table 方式
+            // 如果是表模式
             if (isTableMode) {
-                // 已在之前进行了扩展和`处理，可以直接使用
+                // 从配置中获取表列表
                 List<String> tables = connConf.getList(Key.TABLE, String.class);
-
+                // 确保表列表不为空
                 Validate.isTrue(null != tables && !tables.isEmpty(), "您读取数据库表配置错误.");
 
+                // 获取切分主键配置
                 String splitPk = originalSliceConfig.getString(Key.SPLIT_PK, null);
 
-                //最终切分份数不一定等于 eachTableShouldSplittedNumber
+                // 判断是否需要对表进行切分
                 boolean needSplitTable = eachTableShouldSplittedNumber > 1
                         && StringUtils.isNotBlank(splitPk);
                 if (needSplitTable) {
+                    // 如果是单表，调整切分数量
                     if (tables.size() == 1) {
-                        //原来:如果是单表的，主键切分num=num*2+1
-                        // splitPk is null这类的情况的数据量本身就比真实数据量少很多, 和channel大小比率关系时，不建议考虑
-                        //eachTableShouldSplittedNumber = eachTableShouldSplittedNumber * 2 + 1;// 不应该加1导致长尾
-                        
-                        //考虑其他比率数字?(splitPk is null, 忽略此长尾)
-                        //eachTableShouldSplittedNumber = eachTableShouldSplittedNumber * 5;
-
-                        //为避免导入hive小文件 默认基数为5，可以通过 splitFactor 配置基数
-                        // 最终task数为(channel/tableNum)向上取整*splitFactor
+                        // 根据切分因子调整切分数量
                         Integer splitFactor = originalSliceConfig.getInt(Key.SPLIT_FACTOR, Constant.SPLIT_FACTOR);
                         eachTableShouldSplittedNumber = eachTableShouldSplittedNumber * splitFactor;
                     }
-                    // 尝试对每个表，切分为eachTableShouldSplittedNumber 份
+                    // 对每个表进行切分
                     for (String table : tables) {
                         tempSlice = sliceConfig.clone();
                         tempSlice.set(Key.TABLE, table);
 
+                        // 切分单个表
                         List<Configuration> splittedSlices = SingleTableSplitUtil
                                 .splitSingleTable(tempSlice, eachTableShouldSplittedNumber);
-
                         splittedConfigs.addAll(splittedSlices);
                     }
                 } else {
+                    // 对每个表生成查询语句
                     for (String table : tables) {
                         tempSlice = sliceConfig.clone();
                         tempSlice.set(Key.TABLE, table);
@@ -95,19 +116,17 @@ public final class ReaderSplitUtil {
                     }
                 }
             } else {
-                // 说明是配置的 querySql 方式
+                // 如果是查询语句模式
                 List<String> sqls = connConf.getList(Key.QUERY_SQL, String.class);
-
-                // TODO 是否check 配置为多条语句？？
                 for (String querySql : sqls) {
                     tempSlice = sliceConfig.clone();
                     tempSlice.set(Key.QUERY_SQL, querySql);
                     splittedConfigs.add(tempSlice);
                 }
             }
-
         }
 
+        // 返回分割后的配置项列表
         return splittedConfigs;
     }
 
@@ -156,11 +175,23 @@ public final class ReaderSplitUtil {
         return queryConfig;
     }
 
+    /**
+     * 计算每个表应分配的拆分数量
+     * 该方法用于根据建议的拆分总数和表的数量，计算每个表应该被拆分的次数
+     * 在数据迁移过程中，为了平衡每个表的开销，这个方法确保了每个表的拆分次数尽可能均匀
+     *
+     * @param adviceNumber 总的拆分建议数量，表示希望进行的拆分总数
+     * @param tableNumber 表的数量，表示需要拆分的表的数量
+     * @return 每个表应分配的拆分数量，返回每个表需要进行的拆分次数
+     */
     private static int calculateEachTableShouldSplittedNumber(int adviceNumber,
                                                               int tableNumber) {
+        // 计算每个表平均应分配的拆分数量，使用浮点数进行精确计算
         double tempNum = 1.0 * adviceNumber / tableNumber;
 
+        // 使用Math.ceil将计算结果向上取整，以确保拆分次数的分配不会小于实际需要的次数
         return (int) Math.ceil(tempNum);
     }
+
 
 }

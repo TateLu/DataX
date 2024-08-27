@@ -58,42 +58,66 @@ public class CommonRdbmsReader {
                     originalConfig.toJSON());
         }
 
-        public void preCheck(Configuration originalConfig,DataBaseType dataBaseType) {
-            /*检查每个表是否有读权限，以及querySql跟splik Key是否正确*/
+        /**
+         * 执行预检查，确保数据读取的正确性和有效性
+         *
+         * @param originalConfig 原始配置信息，包含数据读取的各项参数
+         * @param dataBaseType 数据库类型，用于区分不同的数据库以执行相应的预检查逻辑
+         */
+        public void preCheck(Configuration originalConfig, DataBaseType dataBaseType) {
+            // 根据原始配置执行分割预检查，确保每个表都有读权限，且querySql和split Key正确
             Configuration queryConf = ReaderSplitUtil.doPreCheckSplit(originalConfig);
+            // 提取分割主键，用于后续处理
             String splitPK = queryConf.getString(Key.SPLIT_PK);
+            // 提取连接列表，用于并行执行预检查任务
             List<Object> connList = queryConf.getList(Constant.CONN_MARK, Object.class);
+            // 提取用户名和密码，用于数据库连接
             String username = queryConf.getString(Key.USERNAME);
             String password = queryConf.getString(Key.PASSWORD);
+
+            // 根据连接列表的大小，创建固定大小的线程池
             ExecutorService exec;
             if (connList.size() < 10){
                 exec = Executors.newFixedThreadPool(connList.size());
             }else{
                 exec = Executors.newFixedThreadPool(10);
             }
+
+            // 初始化预检查任务列表
             Collection<PreCheckTask> taskList = new ArrayList<PreCheckTask>();
             for (int i = 0, len = connList.size(); i < len; i++){
+                // 从连接配置中创建新的配置对象
                 Configuration connConf = Configuration.from(connList.get(i).toString());
+                // 创建预检查任务，包含用户名、密码、连接配置、数据库类型和分割主键
                 PreCheckTask t = new PreCheckTask(username,password,connConf,dataBaseType,splitPK);
                 taskList.add(t);
             }
+
+            // 初始化保存所有任务执行结果的列表
             List<Future<Boolean>> results = Lists.newArrayList();
             try {
+                // 执行所有预检查任务，并获取结果
                 results = exec.invokeAll(taskList);
             } catch (InterruptedException e) {
+                // 若执行过程中被中断，保留中断状态
                 Thread.currentThread().interrupt();
             }
 
+            // 遍历所有任务的执行结果
             for (Future<Boolean> result : results){
                 try {
+                    // 获取任务的执行结果，若结果为false或有异常将抛出
                     result.get();
                 } catch (ExecutionException e) {
+                    // 若任务执行异常，抛出自定义异常
                     DataXException de = (DataXException) e.getCause();
                     throw de;
                 }catch (InterruptedException e) {
+                    // 若获取结果过程中被中断，保留中断状态
                     Thread.currentThread().interrupt();
                 }
             }
+            // 关闭线程池，释放资源
             exec.shutdownNow();
         }
 
