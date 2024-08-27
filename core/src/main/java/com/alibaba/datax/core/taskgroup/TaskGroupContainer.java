@@ -34,7 +34,12 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
+/**
+ * TaskGroupContainer类继承自AbstractContainer，代表一个任务组容器
+ * 这个类主要用于管理和存储一组相关的任务，提供给这些任务在执行过程中所需的环境和资源
+ */
 public class TaskGroupContainer extends AbstractContainer {
+
     private static final Logger LOG = LoggerFactory
             .getLogger(TaskGroupContainer.class);
 
@@ -108,84 +113,125 @@ public class TaskGroupContainer extends AbstractContainer {
              */
 
             // 获取channel数目
+            // 从配置中获取通道数量
             int channelNumber = this.configuration.getInt(
                     CoreConstant.DATAX_CORE_CONTAINER_TASKGROUP_CHANNEL);
 
+            // 从配置中获取任务最大重试次数，默认为1
             int taskMaxRetryTimes = this.configuration.getInt(
                     CoreConstant.DATAX_CORE_CONTAINER_TASK_FAILOVER_MAXRETRYTIMES, 1);
 
+            // 从配置中获取任务重试间隔时间，默认为10秒
             long taskRetryIntervalInMsec = this.configuration.getLong(
                     CoreConstant.DATAX_CORE_CONTAINER_TASK_FAILOVER_RETRYINTERVALINMSEC, 10000);
 
+            // 从配置中获取任务最大等待时间，默认为60秒
             long taskMaxWaitInMsec = this.configuration.getLong(CoreConstant.DATAX_CORE_CONTAINER_TASK_FAILOVER_MAXWAITINMSEC, 60000);
-            
+
+            // 获取任务配置列表
             List<Configuration> taskConfigs = this.configuration
                     .getListConfiguration(CoreConstant.DATAX_JOB_CONTENT);
 
+            // 如果启用了调试日志，则输出任务组的配置信息
             if(LOG.isDebugEnabled()) {
                 LOG.debug("taskGroup[{}]'s task configs[{}]", this.taskGroupId,
                         JSON.toJSONString(taskConfigs));
             }
-            
+
+            // 获取当前任务组中的任务数量
             int taskCountInThisTaskGroup = taskConfigs.size();
+            // 输出日志，记录任务组ID、通道数量和任务数量
             LOG.info(String.format(
                     "taskGroupId=[%d] start [%d] channels for [%d] tasks.",
                     this.taskGroupId, channelNumber, taskCountInThisTaskGroup));
-            
+
+            // 注册任务配置与容器通信
             this.containerCommunicator.registerCommunication(taskConfigs);
 
-            Map<Integer, Configuration> taskConfigMap = buildTaskConfigMap(taskConfigs); //taskId与task配置
-            List<Configuration> taskQueue = buildRemainTasks(taskConfigs); //待运行task列表
-            Map<Integer, TaskExecutor> taskFailedExecutorMap = new HashMap<Integer, TaskExecutor>(); //taskId与上次失败实例
-            List<TaskExecutor> runTasks = new ArrayList<TaskExecutor>(channelNumber); //正在运行task
-            Map<Integer, Long> taskStartTimeMap = new HashMap<Integer, Long>(); //任务开始时间
+            // 构建任务配置的ID映射
+            Map<Integer, Configuration> taskConfigMap = buildTaskConfigMap(taskConfigs);
+            // 构建待运行任务列表
+            List<Configuration> taskQueue = buildRemainTasks(taskConfigs);
+            // 初始化失败任务执行器映射
+            Map<Integer, TaskExecutor> taskFailedExecutorMap = new HashMap<Integer, TaskExecutor>();
+            // 初始化正在运行的任务列表
+            List<TaskExecutor> runTasks = new ArrayList<TaskExecutor>(channelNumber);
+            // 初始化任务开始时间映射
+            Map<Integer, Long> taskStartTimeMap = new HashMap<Integer, Long>();
 
+            // 初始化最后一次报告的时间戳
             long lastReportTimeStamp = 0;
+            // 初始化任务组与容器的通信对象
             Communication lastTaskGroupContainerCommunication = new Communication();
 
             while (true) {
             	//1.判断task状态
+            	// 标记任务是否失败或被终止
             	boolean failedOrKilled = false;
+            	// 获取所有通信对象的映射
             	Map<Integer, Communication> communicationMap = containerCommunicator.getCommunicationMap();
+            	// 遍历所有通信对象
             	for(Map.Entry<Integer, Communication> entry : communicationMap.entrySet()){
+            		// 获取任务ID
             		Integer taskId = entry.getKey();
-            		Communication taskCommunication = entry.getValue();
+            		// 获取任务的通信对象
+                    Communication taskCommunication = entry.getValue();
+                    // 如果任务未完成，则跳过当前循环
                     if(!taskCommunication.isFinished()){
                         continue;
                     }
+                    // 从运行中的任务中移除并获取任务执行器
                     TaskExecutor taskExecutor = removeTask(runTasks, taskId);
 
-                    //上面从runTasks里移除了，因此对应在monitor里移除
+                    // 相应地从监控中移除任务
                     taskMonitor.removeTask(taskId);
 
-                    //失败，看task是否支持failover，重试次数未超过最大限制
+                    // 处理任务失败情况
             		if(taskCommunication.getState() == State.FAILED){
+                        // 将任务执行器放入失败映射中
                         taskFailedExecutorMap.put(taskId, taskExecutor);
+            			// 检查任务是否支持故障恢复且重试次数未超过最大限制
             			if(taskExecutor.supportFailOver() && taskExecutor.getAttemptCount() < taskMaxRetryTimes){
-                            taskExecutor.shutdown(); //关闭老的executor
-                            containerCommunicator.resetCommunication(taskId); //将task的状态重置
+                            // 关闭老的执行器
+                            taskExecutor.shutdown();
+                            // 重置任务的通信状态
+                            containerCommunicator.resetCommunication(taskId);
+            				// 获取任务配置
             				Configuration taskConfig = taskConfigMap.get(taskId);
-            				taskQueue.add(taskConfig); //重新加入任务列表
+            				// 重新加入任务队列
+            				taskQueue.add(taskConfig);
             			}else{
+            				// 标记失败或终止
             				failedOrKilled = true;
+                			// 跳出循环
                 			break;
             			}
+            		// 处理任务被终止的情况
             		}else if(taskCommunication.getState() == State.KILLED){
+            			// 标记失败或终止
             			failedOrKilled = true;
+            			// 跳出循环
             			break;
-            		}else if(taskCommunication.getState() == State.SUCCEEDED){
+            		// 处理任务成功完成的情况
+                    }else if(taskCommunication.getState() == State.SUCCEEDED){
+                        // 获取任务开始时间
                         Long taskStartTime = taskStartTimeMap.get(taskId);
+                        // 如果开始时间不为空
                         if(taskStartTime != null){
+                            // 计算任务执行时间
                             Long usedTime = System.currentTimeMillis() - taskStartTime;
+                            // 记录日志
                             LOG.info("taskGroup[{}] taskId[{}] is successed, used[{}]ms",
                                     this.taskGroupId, taskId, usedTime);
-                            //usedTime*1000*1000 转换成PerfRecord记录的ns，这里主要是简单登记，进行最长任务的打印。因此增加特定静态方法
+                            // 将执行时间转换为ns并记录性能数据
                             PerfRecord.addPerfRecord(taskGroupId, taskId, PerfRecord.PHASE.TASK_TOTAL,taskStartTime, usedTime * 1000L * 1000L);
+                            // 移除任务的开始时间记录和配置记录
                             taskStartTimeMap.remove(taskId);
                             taskConfigMap.remove(taskId);
                         }
                     }
             	}
+
             	
                 // 2.发现该taskGroup下taskExecutor的总状态失败则汇报错误
                 if (failedOrKilled) {
@@ -198,25 +244,29 @@ public class TaskGroupContainer extends AbstractContainer {
                 
                 //3.有任务未执行，且正在运行的任务数小于最大通道限制
                 Iterator<Configuration> iterator = taskQueue.iterator();
+                // 当任务队列中的任务数量少于通道数时，继续添加任务
                 while(iterator.hasNext() && runTasks.size() < channelNumber){
                     Configuration taskConfig = iterator.next();
                     Integer taskId = taskConfig.getInt(CoreConstant.TASK_ID);
                     int attemptCount = 1;
                     TaskExecutor lastExecutor = taskFailedExecutorMap.get(taskId);
+                    // 如果找到上一次失败的任务执行器，设置重试次数并计算失败时间
                     if(lastExecutor!=null){
                         attemptCount = lastExecutor.getAttemptCount() + 1;
                         long now = System.currentTimeMillis();
                         long failedTime = lastExecutor.getTimeStamp();
-                        if(now - failedTime < taskRetryIntervalInMsec){  //未到等待时间，继续留在队列
+                        // 如果距离上一次失败时间未达到重试间隔，跳过当前任务
+                        if(now - failedTime < taskRetryIntervalInMsec){
                             continue;
                         }
-                        if(!lastExecutor.isShutdown()){ //上次失败的task仍未结束
+                        // 如果上一次失败的任务仍未结束，并且等待时间超过最大等待时间，标记通信失败并抛出异常
+                        if(!lastExecutor.isShutdown()){
                             if(now - failedTime > taskMaxWaitInMsec){
                                 markCommunicationFailed(taskId);
                                 reportTaskGroupCommunication(lastTaskGroupContainerCommunication, taskCountInThisTaskGroup);
                                 throw DataXException.asDataXException(CommonErrorCode.WAIT_TIME_EXCEED, "task failover等待超时");
                             }else{
-                                lastExecutor.shutdown(); //再次尝试关闭
+                                lastExecutor.shutdown(); // 再次尝试关闭
                                 continue;
                             }
                         }else{
@@ -224,17 +274,22 @@ public class TaskGroupContainer extends AbstractContainer {
                                     this.taskGroupId, taskId, lastExecutor.getAttemptCount());
                         }
                     }
+                    // 根据重试次数克隆配置或直接使用当前配置
                     Configuration taskConfigForRun = taskMaxRetryTimes > 1 ? taskConfig.clone() : taskConfig;
-                	TaskExecutor taskExecutor = new TaskExecutor(taskConfigForRun, attemptCount);
+                    // 创建任务执行器并开始执行任务
+                    TaskExecutor taskExecutor = new TaskExecutor(taskConfigForRun, attemptCount);
                     taskStartTimeMap.put(taskId, System.currentTimeMillis());
-                	taskExecutor.doStart();
+                    taskExecutor.doStart();
 
                     iterator.remove();
-                    runTasks.add(taskExecutor);
 
-                    //上面，增加task到runTasks列表，因此在monitor里注册。
+                    //书签 注册任务
+                    //这个Java函数的功能是将一个任务执行器（taskExecutor）添加到一个集合中（runTasks）。
+                    // 这个操作通常用于管理系统中的多个任务执行器，以便稍后可以遍历这个集合，并依次调用每个任务执行器来执行特定任务。这里的add方法是List接口中的一个方法，用于向List中添加元素。
+                    runTasks.add(taskExecutor);
                     taskMonitor.registerTask(taskId, this.containerCommunicator.getCommunication(taskId));
 
+                    // 清除失败任务执行器映射，并记录任务启动日志
                     taskFailedExecutorMap.remove(taskId);
                     LOG.info("taskGroup[{}] taskId[{}] attemptCount[{}] is started",
                             this.taskGroupId, taskId, attemptCount);
@@ -378,6 +433,12 @@ public class TaskGroupContainer extends AbstractContainer {
          */
         private Communication taskCommunication;
 
+        /**
+         * 构造一个新的TaskExecutor对象
+         *
+         * @param taskConf 任务的配置信息，用于初始化和配置任务执行环境
+         * @param attemptCount 任务的尝试执行次数，用于管理任务重试逻辑
+         */
         public TaskExecutor(Configuration taskConf, int attemptCount) {
             // 获取该taskExecutor的配置
             this.taskConfig = taskConf;
@@ -461,57 +522,78 @@ public class TaskGroupContainer extends AbstractContainer {
             return generateRunner(pluginType, null);
         }
 
+        /**
+         * 根据插件类型生成相应的Runner实例
+         *
+         * @param pluginType 插件类型，如READER、WRITER等
+         * @param transformerInfoExecs 转换器执行信息列表，用于存在转换器时的数据交换
+         * @return AbstractRunner 返回生成的Runner实例
+         *
+         * 根据提供的插件类型和配置信息，实例化并配置相应的Runner。
+         * 这包括加载Runner类、设置Job配置、初始化与插件相关的collector、
+         * 配置记录发送和接收对象，以及设置Runner的通信和分组/任务ID信息。
+         *
+         * 对于不同类型的插件（如READER和WRITER），处理逻辑会有所不同，
+         * 包括使用的配置参数不同，以及关联的插件collector实例化方式等。
+         *
+         * 如果插件类型不属于已知的Runner类型，则抛出异常。
+         */
         private AbstractRunner generateRunner(PluginType pluginType, List<TransformerExecution> transformerInfoExecs) {
             AbstractRunner newRunner = null;
             TaskPluginCollector pluginCollector;
 
             switch (pluginType) {
                 case READER:
+                    // 加载并配置Reader类型的Runner
                     newRunner = LoadUtil.loadPluginRunner(pluginType,
                             this.taskConfig.getString(CoreConstant.JOB_READER_NAME));
                     newRunner.setJobConf(this.taskConfig.getConfiguration(
                             CoreConstant.JOB_READER_PARAMETER));
 
+                    // 实例化处理脏数据和任务通信的collector
                     pluginCollector = ClassUtil.instantiate(
                             taskCollectorClass, AbstractTaskPluginCollector.class,
                             configuration, this.taskCommunication,
                             PluginType.READER);
 
                     RecordSender recordSender;
+                    // 根据是否存在转换器，选择合适的记录发送器
                     if (transformerInfoExecs != null && transformerInfoExecs.size() > 0) {
                         recordSender = new BufferedRecordTransformerExchanger(taskGroupId, this.taskId, this.channel,this.taskCommunication ,pluginCollector, transformerInfoExecs);
                     } else {
                         recordSender = new BufferedRecordExchanger(this.channel, pluginCollector);
                     }
 
+                    // 设置ReaderRunner的记录发送器
                     ((ReaderRunner) newRunner).setRecordSender(recordSender);
 
-                    /**
-                     * 设置taskPlugin的collector，用来处理脏数据和job/task通信
-                     */
+                    // 设置taskPlugin的collector，用来处理脏数据和job/task通信
                     newRunner.setTaskPluginCollector(pluginCollector);
                     break;
                 case WRITER:
+                    // 加载并配置Writer类型的Runner
                     newRunner = LoadUtil.loadPluginRunner(pluginType,
                             this.taskConfig.getString(CoreConstant.JOB_WRITER_NAME));
                     newRunner.setJobConf(this.taskConfig
                             .getConfiguration(CoreConstant.JOB_WRITER_PARAMETER));
 
+                    // 实例化处理脏数据和任务通信的collector
                     pluginCollector = ClassUtil.instantiate(
                             taskCollectorClass, AbstractTaskPluginCollector.class,
                             configuration, this.taskCommunication,
                             PluginType.WRITER);
+                    // 设置WriterRunner的记录接收器
                     ((WriterRunner) newRunner).setRecordReceiver(new BufferedRecordExchanger(
                             this.channel, pluginCollector));
-                    /**
-                     * 设置taskPlugin的collector，用来处理脏数据和job/task通信
-                     */
+                    // 设置taskPlugin的collector，用来处理脏数据和job/task通信
                     newRunner.setTaskPluginCollector(pluginCollector);
                     break;
                 default:
+                    // 对于未知插件类型，抛出异常
                     throw DataXException.asDataXException(FrameworkErrorCode.ARGUMENT_ERROR, "Cant generateRunner for:" + pluginType);
             }
 
+            // 设置Runner的分组ID、任务ID和通信实例
             newRunner.setTaskGroupId(taskGroupId);
             newRunner.setTaskId(this.taskId);
             newRunner.setRunnerCommunication(this.taskCommunication);

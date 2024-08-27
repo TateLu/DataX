@@ -22,8 +22,7 @@ public abstract class ProcessInnerScheduler extends AbstractScheduler {
 
     @Override
     public void startAllTaskGroup(List<Configuration> configurations) {
-        this.taskGroupContainerExecutorService = Executors
-                .newFixedThreadPool(configurations.size());
+        this.taskGroupContainerExecutorService = Executors.newFixedThreadPool(configurations.size());
 
         for (Configuration taskGroupConfiguration : configurations) {
             TaskGroupContainerRunner taskGroupContainerRunner = newTaskGroupContainerRunner(taskGroupConfiguration);

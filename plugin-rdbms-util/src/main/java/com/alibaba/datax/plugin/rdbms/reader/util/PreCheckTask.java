@@ -18,14 +18,35 @@ import java.util.concurrent.Callable;
 /**
  * Created by judy.lt on 2015/6/4.
  */
+/**
+ * PreCheckTask类实现了Callable接口，用于在数据库操作前执行预检查任务
+ * 该类的主要目的是根据提供的数据库连接信息和任务相关的参数，执行特定的预检查逻辑
+ * 例如，验证用户凭证、检查数据库连接的有效性等
+ */
 public class PreCheckTask implements Callable<Boolean>{
+    // 日志记录器，用于记录预检查任务的执行情况
     private static final Logger LOG = LoggerFactory.getLogger(PreCheckTask.class);
+
+    // 数据库连接所需的用户名
     private String userName;
+    // 数据库连接所需的密码
     private String password;
+    // 分区主键ID，用于标识预检查任务处理的数据分区
     private String splitPkId;
+    // 数据库连接配置，包含了建立数据库连接所需的信息
     private Configuration connection;
+    // 数据库类型，定义了预检查任务需要操作的数据库种类（如MySQL, Oracle等）
     private DataBaseType dataBaseType;
 
+    /**
+     * 构造函数，初始化PreCheckTask对象
+     *
+     * @param userName    数据库用户名
+     * @param password    数据库密码
+     * @param connection  数据库连接配置
+     * @param dataBaseType 数据库类型
+     * @param splitPkId   分区主键ID，用于标识处理的数据分区
+     */
     public PreCheckTask(String userName,
                         String password,
                         Configuration connection,

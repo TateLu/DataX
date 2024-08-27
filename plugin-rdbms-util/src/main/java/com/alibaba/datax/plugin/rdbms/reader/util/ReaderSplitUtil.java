@@ -24,7 +24,8 @@ public final class ReaderSplitUtil {
             .getLogger(ReaderSplitUtil.class);
 
     /**
-     * 执行配置分割方法
+     * 执行配置分割为多个SQL查询语句
+     *
      * 根据原始配置和建议数量来分割配置，以适应DataX并行任务的需求
      *
      * @param originalSliceConfig 原始配置项，包含数据库连接信息、切分列、WHERE条件等
@@ -100,9 +101,9 @@ public final class ReaderSplitUtil {
                         tempSlice = sliceConfig.clone();
                         tempSlice.set(Key.TABLE, table);
 
-                        // 切分单个表
+                        // 按照主键，切分单个表为多个SQL查询
                         List<Configuration> splittedSlices = SingleTableSplitUtil
-                                .splitSingleTable(tempSlice, eachTableShouldSplittedNumber);
+                            .splitSingleTable(tempSlice, eachTableShouldSplittedNumber);
                         splittedConfigs.addAll(splittedSlices);
                     }
                 } else {

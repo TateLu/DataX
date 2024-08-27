@@ -59,7 +59,8 @@ public abstract class AbstractScheduler {
 
         // 计算总任务数
         int totalTasks = calculateTaskCount(configurations);
-        // 启动所有任务组
+
+        // 书签 启动所有任务组
         startAllTaskGroup(configurations);
 
         // 初始化上次任务容器通信状态

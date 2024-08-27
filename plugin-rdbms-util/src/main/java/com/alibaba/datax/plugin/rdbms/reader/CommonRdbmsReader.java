@@ -192,10 +192,21 @@ public class CommonRdbmsReader {
             basicMsg = String.format("jdbcUrl:[%s]", this.jdbcUrl);
 
         }
-        //书签 mysql 读取
+        //书签 读取数据 mysql
+        /**
+         * 开始读取数据
+         *
+         * @param readerSliceConfig 读取切片的配置，用于定制化读取过程
+         * @param recordSender 记录发送器，用于发送读取到的数据
+         * @param taskPluginCollector 插件收集器，用于监控任务执行情况
+         * @param fetchSize 每次读取的数据量，用于控制读取效率和内存使用
+         */
         public void startRead(Configuration readerSliceConfig,
                               RecordSender recordSender,
                               TaskPluginCollector taskPluginCollector, int fetchSize) {
+            // 核心逻辑：根据传入的配置和参数，初始化读取操作，设置记录发送器和插件收集器
+            // 控制每次读取的数据量，以提高效率和减少内存占用
+
             String querySql = readerSliceConfig.getString(Key.QUERY_SQL);
             String table = readerSliceConfig.getString(Key.TABLE);
 
@@ -216,6 +227,14 @@ public class CommonRdbmsReader {
             int columnNumber = 0;
             ResultSet rs = null;
             try {
+                // 执行查询操作并获取结果集
+                // 这里使用了DBUtil工具类的query方法来执行SQL查询，该方法封装了查询过程，简化了数据库操作
+                // 参数：
+                // - conn：数据库连接对象，表示与数据库的连接
+                // - querySql：字符串类型的SQL查询语句，用于指定要从数据库中检索的数据
+                // - fetchSize：表示每次从数据库中获取的行数，用于优化内存使用和查询性能
+                // 返回值：
+                // 方法返回一个结果集（ResultSet对象），包含查询到的所有数据
                 rs = DBUtil.query(conn, querySql, fetchSize);
                 queryPerfRecord.end();
 
@@ -256,15 +275,44 @@ public class CommonRdbmsReader {
             // do nothing
         }
         
-        protected Record transportOneRecord(RecordSender recordSender, ResultSet rs, 
-                ResultSetMetaData metaData, int columnNumber, String mandatoryEncoding, 
+        /**
+         * 传输单条记录方法
+         * 该方法根据结果集（ResultSet）和元数据（ResultSetMetaData）构建一条记录（Record），
+         * 并通过RecordSender发送该记录进行写入，最后返回构建的记录
+         *
+         * @param recordSender 用于发送记录的发送器
+         * @param rs 结果集，包含要传输的数据
+         * @param metaData 结果集的元数据，用于理解结果集中的数据类型和结构
+         * @param columnNumber 结果集中列的数量，用于遍历和处理数据列
+         * @param mandatoryEncoding 强制编码，确保数据传输时的编码一致性
+         * @param taskPluginCollector 任务插件收集器，用于收集任务执行中的相关信息
+         * @return 返回根据结果集构建的记录
+         */
+        protected Record transportOneRecord(RecordSender recordSender, ResultSet rs,
+                ResultSetMetaData metaData, int columnNumber, String mandatoryEncoding,
                 TaskPluginCollector taskPluginCollector) {
-            Record record = buildRecord(recordSender,rs,metaData,columnNumber,mandatoryEncoding,taskPluginCollector); 
+            // 根据参数构建单条记录
+            Record record = buildRecord(recordSender, rs, metaData, columnNumber, mandatoryEncoding, taskPluginCollector);
+            // 将构建的记录发送到写入器进行写入
             recordSender.sendToWriter(record);
+            // 返回构建的记录
             return record;
         }
-        protected Record buildRecord(RecordSender recordSender,ResultSet rs, ResultSetMetaData metaData, int columnNumber, String mandatoryEncoding,
-        		TaskPluginCollector taskPluginCollector) {
+        /**
+         * 构建并返回一个Record对象
+         * 该方法根据提供的ResultSet对象中的数据、结果集元数据和相关参数，创建一个Record实例并用以封装这些信息
+         * 主要用于将数据库查询结果的一行转换为Record对象，以便后续处理
+         *
+         * @param recordSender 用于发送记录的发送者，此处未直接用于构建Record，但可能用于记录关联信息或配置
+         * @param rs 结果集对象，代表数据库查询的结果，将从此结果集中提取一行数据来填充Record对象
+         * @param metaData 结果集的元数据对象，提供关于结果集列的信息，如列名、列类型等
+         * @param columnNumber 列数，指示结果集中列的数量，用于处理变长的记录结构
+         * @param mandatoryEncoding 强制编码，指定处理文本数据时必须使用的编码方式，确保数据编码的一致性
+         * @param taskPluginCollector 任务插件收集器，用于收集或报告任务执行过程中的相关信息或问题，增强任务执行的可监控性和可维护性
+         * @return 返回一个填充了ResultSet中一行数据的Record对象，作为后续处理的数据单元
+         */
+        protected Record buildRecord(RecordSender recordSender, ResultSet rs, ResultSetMetaData metaData, int columnNumber, String mandatoryEncoding,
+                                     TaskPluginCollector taskPluginCollector) {
         	Record record = recordSender.createRecord();
 
             try {

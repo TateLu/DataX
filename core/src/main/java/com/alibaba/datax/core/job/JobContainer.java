@@ -93,81 +93,111 @@ public class JobContainer extends AbstractContainer {
      * post以及destroy和statistics
      */
     @Override
+    /**
+     * 启动DataX作业容器
+     * 该方法依次执行作业的预处理、初始化、准备、切分、调度和后处理等阶段
+     * 如果作业运行中出现异常，将进行相应的错误处理
+     */
     public void start() {
+        // 记录作业容器启动信息
         LOG.info("DataX jobContainer starts job.");
 
+        // 初始化标志变量，用于指示作业运行中是否发生异常
         boolean hasException = false;
+        // 初始化标志变量，用于指示是否为干运行（不执行实际数据迁移的测试运行）
         boolean isDryRun = false;
         try {
+            // 记录作业开始时间
             this.startTimeStamp = System.currentTimeMillis();
+            // 检查配置，确定是否为干运行
             isDryRun = configuration.getBool(CoreConstant.DATAX_JOB_SETTING_DRYRUN, false);
             if(isDryRun) {
+                // 干运行时，执行预检查
                 LOG.info("jobContainer starts to do preCheck ...");
                 this.preCheck();
             } else {
+                // 非干运行时，复制配置到用户配置
                 userConf = configuration.clone();
+                // 执行预处理
                 LOG.debug("jobContainer starts to do preHandle ...");
                 this.preHandle();
 
+                // 执行作业初始化
                 LOG.debug("jobContainer starts to do init ...");
                 this.init();
+                // 执行准备阶段
                 LOG.info("jobContainer starts to do prepare ...");
                 this.prepare();
+                // 解析配置，划分执行阶段，确定作业的总阶段数
                 LOG.info("jobContainer starts to do split ...");
                 this.totalStage = this.split();
+                // 书签 启动容器 执行调度阶段
                 LOG.info("jobContainer starts to do schedule ...");
                 this.schedule();
+                // 执行后处理
                 LOG.debug("jobContainer starts to do post ...");
                 this.post();
 
+                // 执行后处理
                 LOG.debug("jobContainer starts to do postHandle ...");
                 this.postHandle();
+                // 记录作业成功完成的日志
                 LOG.info("DataX jobId [{}] completed successfully.", this.jobId);
 
+                // 调用作业完成后的钩子
                 this.invokeHooks();
             }
         } catch (Throwable e) {
+            // 记录作业运行中的异常信息
             LOG.error("Exception when job run", e);
 
+            // 设置异常标志
             hasException = true;
 
+            // 处理OutOfMemoryError异常，尝试销毁作业和进行垃圾回收
             if (e instanceof OutOfMemoryError) {
                 this.destroy();
                 System.gc();
             }
 
-
+            // 检查容器通信器是否为空，如果为空则初始化
             if (super.getContainerCommunicator() == null) {
-                // 由于 containerCollector 是在 scheduler() 中初始化的，所以当在 scheduler() 之前出现异常时，需要在此处对 containerCollector 进行初始化
-
                 AbstractContainerCommunicator tempContainerCollector;
-                // standalone
+                // standalone模式下初始化容器通信器
                 tempContainerCollector = new StandAloneJobContainerCommunicator(configuration);
 
                 super.setContainerCommunicator(tempContainerCollector);
             }
 
+            // 收集容器信息，准备异常报告
             Communication communication = super.getContainerCommunicator().collect();
-            // 汇报前的状态，不需要手动进行设置
+            // 不需要手动设置状态为失败
             // communication.setState(State.FAILED);
             communication.setThrowable(e);
             communication.setTimestamp(this.endTimeStamp);
 
+            // 初始化通信对象，用于时间戳记录
             Communication tempComm = new Communication();
             tempComm.setTimestamp(this.startTransferTimeStamp);
 
+            // 获取报告通信对象，汇总作业信息和异常信息
             Communication reportCommunication = CommunicationTool.getReportCommunication(communication, tempComm, this.totalStage);
+            // 上报异常信息
             super.getContainerCommunicator().report(reportCommunication);
 
+            // 抛出DataX框架异常
             throw DataXException.asDataXException(
                     FrameworkErrorCode.RUNTIME_ERROR, e);
         } finally {
+            // 非干运行情况下执行清理工作
             if(!isDryRun) {
 
+                // 销毁作业资源
                 this.destroy();
+                // 记录作业结束时间
                 this.endTimeStamp = System.currentTimeMillis();
+                // 如果作业运行中未发生异常，记录并输出性能统计信息
                 if (!hasException) {
-                    //最后打印cpu的平均消耗，GC的统计
                     VMInfo vmInfo = VMInfo.getVmInfo();
                     if (vmInfo != null) {
                         vmInfo.getDelta(false);
@@ -180,6 +210,7 @@ public class JobContainer extends AbstractContainer {
             }
         }
     }
+
 
     private void preCheck() {
         this.preCheckInit();
@@ -383,35 +414,52 @@ public class JobContainer extends AbstractContainer {
      * 达到切分后数目相等，才能满足1：1的通道模型，所以这里可以将reader和writer的配置整合到一起，
      * 然后，为避免顺序给读写端带来长尾影响，将整合的结果shuffler掉
      */
+    /**
+     * 分割作业配置，以支持并行处理
+     * 该方法首先调整通道数量，确保请求的通道数量合理
+     * 然后，根据所需的通道数量，将读取器和写入器配置分别分割成多个子任务配置
+     * 最后，合并读取器、写入器和转换器配置，以形成最终的作业内容配置
+     *
+     * @return 分割后的作业内容配置项的数量
+     */
     private int split() {
+        // 调整通道数量，确保其符合特定条件
         this.adjustChannelNumber();
 
+        // 确保需要的通道数量至少为1
         if (this.needChannelNumber <= 0) {
             this.needChannelNumber = 1;
         }
 
+        // 根据需要的通道数量，执行读取器分割，生成读取器任务配置列表
         List<Configuration> readerTaskConfigs = this
                 .doReaderSplit(this.needChannelNumber);
+        // 获取生成的读取器任务配置数量
         int taskNumber = readerTaskConfigs.size();
+        // 根据任务数量，执行写入器分割，生成写入器任务配置列表
         List<Configuration> writerTaskConfigs = this
                 .doWriterSplit(taskNumber);
 
+        // 获取转换器配置列表
         List<Configuration> transformerList = this.configuration.getListConfiguration(CoreConstant.DATAX_JOB_CONTENT_TRANSFORMER);
 
+        // 记录转换器配置信息
         LOG.debug("transformer configuration: "+ JSON.toJSONString(transformerList));
-        /**
-         * 输入是reader和writer的parameter list，输出是content下面元素的list
-         */
+        // 输入是reader和writer的parameter list，输出是content下面元素的list
+        // 合并读取器、写入器和转换器配置，形成作业内容配置
         List<Configuration> contentConfig = mergeReaderAndWriterTaskConfigs(
                 readerTaskConfigs, writerTaskConfigs, transformerList);
 
-
+        // 记录合并后的作业内容配置信息
         LOG.debug("contentConfig configuration: "+ JSON.toJSONString(contentConfig));
 
+        // 设置最终的作业内容配置
         this.configuration.set(CoreConstant.DATAX_JOB_CONTENT, contentConfig);
 
+        // 返回作业内容配置的数量
         return contentConfig.size();
     }
+
 
     private void adjustChannelNumber() {
         int needChannelNumberByByte = Integer.MAX_VALUE;
@@ -531,7 +579,7 @@ public class JobContainer extends AbstractContainer {
             LOG.info("Running by {} Mode.", executeMode);
 
             this.startTransferTimeStamp = System.currentTimeMillis();
-
+            //该Java语句用于调度任务。具体来说，使用scheduler调度器来安排taskGroupConfigs中的所有任务。taskGroupConfigs可能包含多个任务及其配置信息。此语句执行后，各任务将按其配置的时间计划开始执行。
             scheduler.schedule(taskGroupConfigs);
 
             this.endTransferTimeStamp = System.currentTimeMillis();
@@ -726,19 +774,41 @@ public class JobContainer extends AbstractContainer {
     }
 
     // TODO: 如果源头就是空数据
+    /**
+     * 根据建议的切分数量对Reader进行切分
+     *
+     * 此方法首先通过设置当前线程的类加载器为特定Reader插件的类加载器来确保正确的类加载，
+     * 然后调用作业Reader的split方法对Reader进行切分，生成多个配置片
+     * 切分完成后，会检查切分结果的有效性，如果无效则抛出异常
+     * 最后，恢复原先的当前线程类加载器，并返回切分后的配置片列表
+     *
+     * @param adviceNumber 建议的切分数量，用于指导Reader切分
+     * @return 返回Reader切分后的配置片列表
+     * @throws DataXException 如果Reader切分后的任务数目小于等于0，则抛出异常
+     */
     private List<Configuration> doReaderSplit(int adviceNumber) {
+        // 设置当前线程的类加载器为特定Reader插件的类加载器，确保正确加载Reader插件类
         classLoaderSwapper.setCurrentThreadClassLoader(LoadUtil.getJarLoader(
                 PluginType.READER, this.readerPluginName));
-        List<Configuration> readerSlicesConfigs =
-                this.jobReader.split(adviceNumber);
+
+        // 调用作业Reader的split方法对Reader进行切分，生成多个配置片
+        List<Configuration> readerSlicesConfigs = this.jobReader.split(adviceNumber);
+
+        // 检查切分结果的有效性，如果无效则抛出异常
         if (readerSlicesConfigs == null || readerSlicesConfigs.size() <= 0) {
             throw DataXException.asDataXException(
                     FrameworkErrorCode.PLUGIN_SPLIT_ERROR,
                     "reader切分的task数目不能小于等于0");
         }
+
+        // 打印日志，记录Reader切分的结果，包括切分后的任务数量
         LOG.info("DataX Reader.Job [{}] splits to [{}] tasks.",
                 this.readerPluginName, readerSlicesConfigs.size());
+
+        // 恢复原先的当前线程类加载器
         classLoaderSwapper.restoreCurrentThreadClassLoader();
+
+        // 返回切分后的配置片列表
         return readerSlicesConfigs;
     }
 
